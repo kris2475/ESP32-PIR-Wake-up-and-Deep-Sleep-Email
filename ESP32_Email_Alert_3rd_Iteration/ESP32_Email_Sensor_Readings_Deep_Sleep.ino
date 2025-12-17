@@ -7,14 +7,14 @@
 // ===================================
 
 // Wi-Fi Credentials
-#define WIFI_SSID       "SKYYRMR7" 
-#define WIFI_PASSWORD   "K2xWvDFZkuCh" 
+#define WIFI_SSID       "" 
+#define WIFI_PASSWORD   "" 
 
 // Gmail Sender Configuration (Using App Password)
 #define SMTP_HOST         "smtp.gmail.com"
 #define SMTP_PORT         465                 // SSL (recommended)
-#define SENDER_EMAIL      "data.monitor.bot@gmail.com"
-#define SENDER_PASSWORD   "qznrhhizewhfzrud" // YOUR 16-CHAR APP PASSWORD
+#define SENDER_EMAIL      ""
+#define SENDER_PASSWORD   "" // YOUR 16-CHAR APP PASSWORD
 #define SENDER_NAME       "15-Min Temp Log"
 
 // Recipient Configuration
@@ -283,3 +283,4 @@ void smtpCallback(SMTP_Status status) {
   }
   Serial.println("------------------------------------");
 }
+
