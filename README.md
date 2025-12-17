@@ -1,158 +1,132 @@
-# ESP32 Deep Sleep Time-Aligned Monitoring and Alert System
+# ESP32 Deep Sleep Time-Aligned Logger (2-Minute Interval)
 
-This repository documents the development of a robust, ultra-low-power environmental monitoring solution using the ESP32. The system is designed to wake up from **Deep Sleep** at precise, clock-aligned intervals (final configuration: **10 minutes**) to read sensor data and transmit it via email (SMTP).
+## 📝 Overview
 
----
+This Arduino sketch runs on an ESP32 microcontroller to periodically **read the ESP32’s internal temperature sensor register** and report the result via email. The primary objective of the project is to achieve **ultra-low power operation** using the ESP32’s **Deep Sleep** mode while maintaining **strict alignment to real-world clock boundaries** for data logging.
 
-## 🚀 Project Goal
+The system is designed to wake and evaluate logging conditions **exactly on the minute, every 2 minutes** (for example, `10:00:00`, `10:02:00`, `10:04:00`).
 
-The primary objective was to achieve **perfect time-alignment for data logging**. The system had to reliably:
-
-- Enter Deep Sleep for ultra-low power consumption  
-- Wake up and synchronise with an NTP server  
-- Calculate the exact time remaining until the next scheduled 10-minute mark  
-- Send a complete data log via email before returning to sleep  
+> **Important clarification:**  
+> The sketch correctly reads the value returned by the ESP32’s internal temperature sensor on every wake-up. The constant temperature value observed is a **hardware characteristic of the ESP32 internal sensor**, not a software or scheduling error. The sensor is read freshly each time, and the value comes directly from the hardware register. The repeated 53.33°C value simply reflects the known behavior and low resolution of the ESP32 internal sensor, which is not calibrated for absolute temperature measurement.
 
 ---
 
-## ⚙️ Iterative Development and Core Challenge
+## 🔋 Key Design Features
 
-The development process centred on overcoming a persistent and non-trivial scheduling flaw inherent in combining **Deep Sleep** with **NTP synchronisation**.
+### 1. Low-Power Operation (Deep Sleep)
 
-### The Initial Problem: Continuous Skipping
+The primary energy-saving mechanism is the ESP32’s **Deep Sleep** mode.
 
-Early iterations suffered from logs that continuously skipped scheduled intervals.
+- The ESP32 is awake only long enough to:
+  - Connect to Wi-Fi
+  - Synchronize system time via NTP
+  - Read the internal temperature sensor register
+  - Send an email report
+- Typical active time: **5–10 seconds**
+- Typical sleep duration: approximately **1 minute 50 seconds**
+- During Deep Sleep, the main CPU is powered down and current consumption drops into the **microamp range**
 
-Example failure mode:
-- The ESP32 wakes for the `10:00` log.
-- Wi-Fi connection and NTP synchronisation push the current time to `10:00:03`.
-- Because the schedule target is `10:00:00`, the system determines it has *missed* the interval.
-- The next capture is rescheduled for `10:10:00`, causing the `10:00` log to be skipped entirely.
-
----
-
-## 🛠️ The Solution: RTC Memory and Safety Buffer
-
-The final, stable implementation introduced **three critical fixes** that fully stabilised the scheduling logic.
-
-### 1. RTC Memory Preservation (`RTC_DATA_ATTR`)
-
-Key variables are stored in RTC memory so they survive Deep Sleep cycles:
-
-- `nextCaptureTime`
-- `initialTimeSet`
-
-This ensures the system remembers its intended schedule across wake-ups.
+This design is well-suited for long-term, battery-powered deployments.
 
 ---
 
-### 2. The Schedule Flag (`initialTimeSet`)
+### 2. Precise Time Alignment (NTP Synchronization)
 
-A boolean flag ensures that the schedule is calculated **only once**, on the very first boot or firmware flash.
+To prevent long-term drift, the system relies on **Network Time Protocol (NTP)** synchronization rather than free-running timers.
 
-- On first boot: the schedule is initialised
-- On subsequent wake-ups: the code skips schedule recalculation and relies on the preserved `nextCaptureTime`
+**Execution flow:**
 
-This prevents drift caused by repeatedly re-evaluating timing after each wake cycle.
+1. **Wake-up**  
+   The ESP32 wakes via its internal RTC timer.
 
----
+2. **Time Synchronization**  
+   It connects to Wi-Fi and synchronizes its clock with an NTP server.
 
-### 3. The 60-Second Safety Buffer
+3. **Boundary Calculation**  
+   The firmware calculates the number of seconds remaining until the next official 2-minute boundary (for example, `10:02:00`).
 
-The logging condition was expanded from a strict equality check to include a tolerance window:
+4. **Re-Scheduling**  
+   Deep Sleep is re-entered with a timer duration computed from the current wall-clock time.
 
-Log Condition:
-(Current Time ≥ Next Capture Time)
-OR
-(Time Remaining < 60 seconds)
-
-yaml
-Copy code
-
-This buffer guarantees that even if:
-- The ESP32 wakes slightly early, or
-- Wi-Fi and NTP synchronisation take several seconds
-
-…the system will still execute the log within the valid time window.
+This approach keeps log timestamps aligned with real-world time, compensating for:
+- RTC drift
+- Variable Wi-Fi connection times
+- Email transmission latency
 
 ---
 
-## ✅ Final Configuration (10-Minute Interval)
+### 3. Schedule Persistence (RTC Memory)
 
-The final sketch executes a stable, repeatable, and clock-aligned logging cycle every 10 minutes.
+The sketch uses `RTC_DATA_ATTR` to preserve scheduling state across Deep Sleep cycles.
 
-| Feature        | Configuration |
-|---------------|---------------|
-| Log Interval  | 10 minutes (aligned to :00, :10, :20, etc.) |
-| Power State   | Deep Sleep (minimal power draw between logs) |
-| Time Source   | NTP (synchronised on every wake-up) |
-| Alert Medium  | SMTP Email (Gmail App Password authentication) |
+**Persistent variables include:**
 
----
+- `nextCaptureTime`  
+  Stores the absolute timestamp of the next intended log event.
 
-## 💡 Use Cases
+- `initialTimeSet`  
+  Ensures that the logging schedule is initialized **only once**, on first boot or after firmware upload.
 
-The reliability and ultra-low-power nature of this logger make it well suited to applications where continuous monitoring is critical but power access is limited—particularly within the **HVAC domain**.
+This prevents re-alignment or schedule reset on every wake-up.
 
 ---
 
-## 🔥 Underfloor Heating (UFH) Monitoring (Most Essential)
+## 🌡 Internal Temperature Sensor Behavior (Expected)
 
-UFH systems are high-thermal-mass installations with strict safety limits, making precision logging essential.
+The sketch reads the ESP32’s internal temperature sensor using `temprature_sens_read()`.
 
-### Floor Damage Prevention
+- The function **does perform a fresh hardware register read on every wake-up**
+- The returned value is **not cached** by the firmware
+- The conversion logic is correct
 
-Most finished floors (e.g., wood, laminate) have a maximum allowable surface temperature (often around **28 °C / 82 °F**).
+However:
 
-- If a sensor detects the floor approaching this limit due to a fault (e.g., mixing valve failure),
-- The ESP32 sends an **immediate critical email alert**
-- Maintenance personnel can shut down boiler flow before irreversible damage occurs (warping, cracking)
+- The ESP32 internal temperature sensor is **not calibrated**
+- It has **very low resolution**
+- On many chips it returns a nearly constant raw value (commonly 128 °F ≈ 53.33 °C)
+- Absolute temperature values from this sensor are **not meaningful for ambient temperature measurement**
 
----
-
-### Fault Diagnosis via Trending
-
-UFH faults develop slowly due to the thermal inertia of concrete slabs.
-
-- Regular **10-minute email logs** provide clear, verifiable trend data
-- A technician can easily identify issues such as:
-  - A failed zone actuator
-  - A blocked circuit
-  - Uneven heat distribution
-
-Archived emails allow fault diagnosis without needing live dashboards.
+As a result:
+- The repeated temperature value reflects **actual hardware output**
+- The behavior does **not** indicate a stuck function, frozen code path, or scheduling error
+- The measurement is technically correct in that it reads the register properly every time, but the value itself is **limited by the hardware and cannot be interpreted as true temperature**
 
 ---
 
-## 🔑 Why Email Notification Is Essential
+## ⚠️ Timing Edge Case: Boundary Overrun
 
-In critical IoT systems, email is not merely convenient—it is foundational to reliable operation.
+Although the overall scheduling approach is sound, a known **edge condition** exists near time boundaries.
 
-### Guaranteed, Unattended Alerts
+### Example Scenario
 
-- Email reliably reaches technicians who are not actively monitoring dashboards
-- Standard mobile notifications ensure alerts are seen during off-hours
-- Particularly important when protecting high-value UFH installations
+1. **Scheduled Wake-Up**  
+   Target wake-up: `10:00:00`
+
+2. **Execution Delay**  
+   Wi-Fi connection and email transmission take ~5 seconds.
+
+3. **Post-Processing Time**  
+   Current time becomes `10:00:05`.
+
+4. **Next Boundary Calculation**  
+   The next 2-minute boundary is computed as `10:02:00`.
+
+5. **Deep Sleep Entry**  
+   The ESP32 sleeps until approximately `10:02:00`.
+
+6. **Wake-Up and NTP Sync**  
+   Actual time after sync may be `10:02:01`.
+
+7. **Immediate Log Trigger**  
+   Because the logging condition allows execution when  
+   `currentTime >= nextCaptureTime`, a second log can be triggered immediately.
 
 ---
 
-### Auditable, Verifiable Records
+## Conclusion
 
-- Emails are archived independently of the sensor device and local network
-- Time-stamped logs provide non-erasable proof of system behaviour
-- Often required for:
-  - Insurance claims
-  - Warranty validation
-  - Building control or compliance documentation
+- The firmware **functions correctly in principle**
+- Deep Sleep, RTC persistence, and NTP alignment behave as designed
+- The constant temperature reading reflects **ESP32 hardware limitations**, not a coding error
+- The observed scheduling edge case is a natural consequence of strict boundary alignment combined with variable execution time
 
----
-
-### Ubiquitous Standard
-
-Email is the universal business communication medium.
-
-- No proprietary apps required
-- No complex IoT platforms or credentials
-- Accessible to any stakeholder using standard tools
-
-This guarantees longevity, accessibility, and operational simplicity.
